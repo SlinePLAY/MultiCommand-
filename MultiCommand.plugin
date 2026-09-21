@@ -1,0 +1,449 @@
+__id__ = "multicommand"
+__name__ = "MultiCommand"
+__description__ = "для ознакомления с плагином напишите в любой чат".хелп""
+__author__ = "@SlinePLAY"
+__version__ = "2.0"
+__icon__ = "avamulticommand/0"
+
+import base64
+import random
+import unicodedata
+import urllib.request
+import os
+from datetime import datetime
+from typing import Any, List
+
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from client_utils import edit_message, send_document
+from ui.bulletin import BulletinHelper
+from android_utils import log
+from hook_utils import find_class
+
+# ==================== НАСТРОЙКИ ОБНОВЛЕНИЯ ====================
+# ЗАМЕНИ ЭТИ ССЫЛКИ НА СВОИ!
+UPDATE_URL = "https://raw.githubusercontent.com/твой_ник/multicommand/main/multicommand.plugin"
+DOWNLOAD_URL = "https://github.com/твой_ник/multicommand/releases/latest"
+CURRENT_VERSION = "8.0.0"
+# ============================================================
+
+ARGUE = [
+    "ты вообще не в теме, закрой рот",
+    "твой аргумент ничего не стоит, подумай ещё раз",
+    "ты не прав, и это очевидно даже ребёнку",
+    "иди почитай что-нибудь, потом поговорим",
+    "твой базар вообще не в кассу, следи за словами",
+    "не смеши людей, тебя же никто не слушает",
+    "твоя позиция просто смешна, перестань позориться",
+    "ты несешь полную чушь, остановись",
+    "с тобой спорить — это трата времени, иди гуляй",
+    "твои слова — пустой звук, ничего не доказываешь",
+]
+
+TROLL = [
+    "твой отец еблан, а мать шалава",
+    "тебя мать в детстве об асфальт уронила?",
+    "ты ошибка природы, причём неудачная",
+    "твой род проклят, начиная с тебя",
+    "иди к чёрту, там тебе самое место",
+    "ты настолько тупой, что даже словами не описать",
+    "ты гнилой изнутри, это видно за версту",
+    "сядь, обосрался уже",
+]
+
+ROULETTE = [
+    "да", "нет", "возможно", "не сейчас", "спроси позже",
+    "да, но не сегодня", "нет, но может быть", "однозначно да",
+    "однозначно нет", "я бы не советовал", "попробуй",
+    "не судьба", "звёзды говорят да", "звёзды говорят нет",
+    "делай что хочешь", "тебе решать", "а сам как думаешь?",
+    "50 на 50", "хуй знает", "забей", "не парься",
+]
+
+FORTUNES = [
+    "сегодня тебя ждёт неожиданная встреча — будь готов",
+    "скоро получишь новость, которая всё изменит",
+    "не принимай важных решений до конца недели",
+    "тебя ждёт дорога, и она будет не близкой",
+    "кто-то из прошлого скоро напомнит о себе",
+    "деньги придут оттуда, откуда не ждёшь",
+    "остерегайся человека с зелёными глазами",
+    "твоё желание исполнится, но не так, как ты думаешь",
+    "готовься к переменам — они уже на пороге",
+    "сегодня твой день, не упусти его",
+]
+
+SMART = [
+    "кстати, дельфины спят с одним открытым глазом",
+    "а ты знал, что у осьминога три сердца",
+    "интересный факт: бананы — это ягоды, а малина — нет",
+    "между прочим, Эйнштейн не носил носки",
+    "кстати, мёд не портится никогда",
+    "а ты в курсе, что у улитки около 25 тысяч зубов",
+]
+
+INSERT_CHANCE = 10
+
+# ==================== ШИФР ====================
+_FW = {}
+for _i in range(26):
+    _FW[chr(ord('A') + _i)] = chr(0xFF21 + _i)
+    _FW[chr(ord('a') + _i)] = chr(0xFF41 + _i)
+for _i in range(10):
+    _FW[chr(ord('0') + _i)] = chr(0xFF10 + _i)
+_FW['+'] = '＋'
+_FW['/'] = '／'
+_FW['='] = '＝'
+_REV_FW = {v: k for k, v in _FW.items()}
+
+_ZALGO = [
+    "\u0301", "\u0300", "\u0302", "\u0303", "\u0308", "\u030a",
+    "\u0316", "\u0317", "\u0318", "\u0319", "\u031c", "\u031d",
+]
+
+
+def _add_noise(text):
+    out = []
+    for ch in text:
+        out.append(ch)
+        out.append(random.choice(_ZALGO))
+    return "".join(out)
+
+
+def _strip_combining(text):
+    dec = unicodedata.normalize('NFD', text)
+    return ''.join(c for c in dec if unicodedata.category(c) != 'Mn')
+
+
+def caesar(text, shift=3):
+    out = []
+    for ch in text:
+        if "a" <= ch <= "z":
+            out.append(chr((ord(ch) - ord("a") + shift) % 26 + ord("a")))
+        elif "A" <= ch <= "Z":
+            out.append(chr((ord(ch) - ord("A") + shift) % 26 + ord("A")))
+        elif "а" <= ch <= "я":
+            out.append(chr((ord(ch) - ord("а") + shift) % 32 + ord("а")))
+        elif "А" <= ch <= "Я":
+            out.append(chr((ord(ch) - ord("А") + shift) % 32 + ord("А")))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def encrypt(text):
+    s = caesar(text)
+    b64 = base64.b64encode(s.encode("utf-8")).decode("ascii")
+    wide = "".join(_FW.get(c, c) for c in b64)
+    return _add_noise(wide)
+
+
+def decrypt(text):
+    clean = _strip_combining(text)
+    ascii_t = "".join(_REV_FW.get(c, c) for c in clean)
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+    filtered = "".join(c for c in ascii_t if c in allowed)
+    if not filtered:
+        return "нет данных для расшифровки"
+    pad = len(filtered) % 4
+    if pad:
+        filtered += "=" * (4 - pad)
+    try:
+        s = base64.b64decode(filtered.encode("ascii")).decode("utf-8")
+    except Exception as e:
+        return f"ошибка base64: {e}"
+    return caesar(s, shift=-3)
+
+
+def parse_choices(raw):
+    raw = raw.strip().strip('"').strip("'").strip()
+    for sep in [" или ", " | ", ", "]:
+        if sep in raw:
+            parts = [p.strip().strip('"').strip("'") for p in raw.split(sep)]
+            parts = [p for p in parts if p]
+            if len(parts) >= 2:
+                return parts
+    return []
+
+
+# ==================== ПЛАГИН ====================
+class MultiCommandPlugin(BasePlugin):
+
+    def __init__(self):
+        super().__init__()
+        self.is_dev = False
+        self.msg_count = 0
+        self.session_start = None
+        self.inserts_on = True
+        self.update_checked = False
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+        try:
+            self.add_on_delete_message_hook()
+            self.log("delete hook OK")
+        except AttributeError:
+            try:
+                self.add_hook("delete_message")
+                self.log("delete via add_hook")
+            except Exception as e:
+                self.log(f"delete hook n/a: {e}")
+
+        try:
+            val = self.get_setting("inserts_on", "1")
+            self.inserts_on = (val == "1" or val is True)
+        except Exception:
+            self.inserts_on = True
+
+        self.session_start = datetime.now()
+
+        try:
+            me = self.get_me()
+            un = getattr(me, "username", "") if me else ""
+            if un == "SlinePLAY":
+                self.is_dev = True
+                self.log("DEV for @SlinePLAY")
+        except Exception as e:
+            self.log(f"get_me err: {e}")
+
+        self.log(f"v{CURRENT_VERSION} loaded. Dev: {self.is_dev}")
+
+        # Проверка обновлений при запуске
+        self.check_for_updates()
+
+    def on_plugin_unload(self):
+        self.log("unloaded")
+
+    # ==================== АВТООБНОВЛЕНИЕ ====================
+    def check_for_updates(self):
+        """Проверяет наличие новой версии и показывает плашку с кнопкой."""
+        if self.update_checked:
+            return
+        self.update_checked = True
+
+        try:
+            req = urllib.request.Request(
+                UPDATE_URL,
+                headers={"User-Agent": "MultiCommand/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                remote_code = resp.read().decode("utf-8", errors="ignore")
+
+            remote_version = None
+            for line in remote_code.splitlines():
+                if line.strip().startswith("__version__"):
+                    remote_version = line.split("=")[1].strip().strip('"').strip("'")
+                    break
+
+            if remote_version and self._ver_tuple(remote_version) > self._ver_tuple(CURRENT_VERSION):
+                self.log(f"Доступно обновление: {remote_version}")
+                self._download_and_notify(remote_code, remote_version)
+            else:
+                self.log("Обновлений нет")
+        except Exception as e:
+            self.log(f"update check err: {e}")
+
+    def _ver_tuple(self, v):
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except Exception:
+            return (0,)
+
+    def _download_and_notify(self, remote_code, remote_version):
+        """Сохраняет новый файл и показывает плашку с кнопкой «Обновить»."""
+        try:
+            plugin_dir = os.path.dirname(os.path.abspath(__file__))
+            new_path = os.path.join(plugin_dir, "multicommand_new.plugin")
+
+            with open(new_path, "w", encoding="utf-8") as f:
+                f.write(remote_code)
+
+            self.log(f"Сохранён новый файл: {new_path}")
+
+            BulletinHelper.show_with_button(
+                text=f"MultiCommand v{remote_version} доступен",
+                icon_res_id=0,
+                button_text="Обновить",
+                on_click=lambda: self._install_update(new_path),
+                duration=BulletinHelper.DURATION_PROLONG,
+            )
+            self.log("Плашка с кнопкой показана")
+        except Exception as e:
+            self.log(f"download err: {e}")
+
+    def _install_update(self, file_path):
+        """Открывает скачанный .plugin на установку в exteraGram."""
+        try:
+            send_document(file_path)
+            self.log(f"Файл отправлен в чат: {file_path}")
+        except Exception as e:
+            self.log(f"install err: {e}")
+
+    # ==================== УДАЛЕНИЕ ЧЕРЕЗ ТОЧКУ ====================
+    def on_delete_message_hook(self, account, params):
+        try:
+            msg = getattr(params, "message", None) or getattr(params, "msg", None)
+            if msg is None:
+                return HookResult(strategy=HookStrategy.CONTINUE)
+            try:
+                edit_message(message_obj=msg, passtext=".")
+                self.log("edited to dot before delete")
+            except Exception as e:
+                self.log(f"edit dot err: {e}")
+            return HookResult(strategy=HookStrategy.CONTINUE)
+        except Exception as e:
+            self.log(f"delete hook err: {e}")
+            return HookResult(strategy=HookStrategy.CONTINUE)
+
+    # ==================== КОМАНДЫ ====================
+    def on_send_message_hook(self, account, params):
+        message = getattr(params, "message", None)
+        if not message or not isinstance(message, str):
+            return HookResult(strategy=HookStrategy.CONTINUE)
+
+        text = message.strip()
+        lower = text.lower()
+
+        if lower.startswith("."):
+            # --- ХЕЛП ---
+            if lower == ".хелп" or lower == ".команды":
+                params.message = self.get_help_text()
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            # --- ОБНОВЛЕНИЕ ---
+            if lower == ".обновить":
+                self.update_checked = False
+                params.message = "проверяю обновления..."
+                self.check_for_updates()
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            # --- Вставки ---
+            if lower == ".вставки":
+                self.inserts_on = not self.inserts_on
+                try:
+                    self.set_setting("inserts_on", "1" if self.inserts_on else "0")
+                except Exception:
+                    pass
+                params.message = f"умные вставки {'включены' if self.inserts_on else 'выключены'}"
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".вставки вкл":
+                self.inserts_on = True
+                try: self.set_setting("inserts_on", "1")
+                except Exception: pass
+                params.message = "умные вставки включены"
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".вставки выкл":
+                self.inserts_on = False
+                try: self.set_setting("inserts_on", "0")
+                except Exception: pass
+                params.message = "умные вставки выключены"
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            # --- Спор ---
+            if lower == ".спор":
+                params.message = random.choice(ARGUE)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".тролль":
+                params.message = random.choice(TROLL)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".рулетка":
+                params.message = random.choice(ROULETTE)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".гадалка":
+                params.message = random.choice(FORTUNES)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower.startswith(".гадалка "):
+                orig = text[9:].strip()
+                if orig:
+                    params.message = f"{orig}\n\n{random.choice(FORTUNES)}"
+                    return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower.startswith(".выбери "):
+                ch = parse_choices(text[8:].strip())
+                if not ch:
+                    params.message = "дай два варианта через 'или' или ','"
+                else:
+                    params.message = random.choice(ch)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".стата":
+                up = datetime.now() - self.session_start if self.session_start else None
+                h = up.seconds // 3600 if up else 0
+                m = (up.seconds % 3600) // 60 if up else 0
+                ins = "вкл" if self.inserts_on else "выкл"
+                params.message = (
+                    f"стата\n"
+                    f"сообщений: {self.msg_count}\n"
+                    f"в сети: {h}ч {m}м\n"
+                    f"вставки: {ins}\n"
+                    f"плагин: v{CURRENT_VERSION}"
+                )
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower == ".версия":
+                params.message = f"MultiCommand v{CURRENT_VERSION}\nАвтор: @SlinePLAY"
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            # --- Шифр ---
+            if lower.startswith(".шифр "):
+                orig = text[6:].strip()
+                if orig:
+                    params.message = encrypt(orig)
+                    return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower.startswith(".расшифр "):
+                enc = text[9:].strip()
+                if enc:
+                    params.message = decrypt(enc)
+                    return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            # --- Dev ---
+            if lower.startswith(".доб ") and self.is_dev:
+                p = text[5:].strip()
+                if p:
+                    ARGUE.append(p)
+                    self.log(f"DEV add argue: {p}")
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            if lower.startswith(".добтролль ") and self.is_dev:
+                p = text[10:].strip()
+                if p:
+                    TROLL.append(p)
+                    self.log(f"DEV add troll: {p}")
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+            return HookResult(strategy=HookStrategy.CONTINUE)
+
+        # Умные вставки
+        self.msg_count += 1
+        if self.inserts_on and random.randint(1, 100) <= INSERT_CHANCE:
+            ph = random.choice(SMART)
+            params.message = f"{text}\n\nкстати, {ph}"
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+        return HookResult(strategy=HookStrategy.CONTINUE)
+
+    # ==================== ХЕЛП ====================
+    def get_help_text(self):
+        return (
+            "MultiCommand v" + CURRENT_VERSION + "\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "\n"
+            "Спор\n"
+            ".спор — случайная фраза для спора\n"
+            ".тролль — жёсткая троллинг-фраза\n"
+            "\n"
+            "Развлечения\n"
+            ".рулетка — да/нет/возможно\n"
+            ".гадалка — случайное предсказание\n"
+            ".гадалка <текст> — текст + предсказание\n"
+            ".выбери а или б — случайный выбор\n"
+            "\n"
+            "Шифрование\n"
+            ".шифр <текст> — зашифровать\n"
+            ".расшифр <каша> — расшифровать\n"
+            "\n"
+            "Управление\n"
+            ".вставки — вкл/выкл умные вставки\n"
+            ".вставки вкл — включить\n"
+            ".вставки выкл — выключить\n"
+            ".обновить — проверить обновления\n"
+            ".стата — статистика\n"
+            ".версия — версия плагина\n"
+            ".хелп — это сообщение\n"
+        )
