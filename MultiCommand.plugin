@@ -2,7 +2,7 @@ __id__ = "multicommand"
 __name__ = "MultiCommand"
 __description__ = "для ознакомления с плагином напишите в любой чат \".хелп\""
 __author__ = "@SlinePLAY"
-__version__ = "2.2"
+__version__ = "2.3"
 __icon__ = "avamulticommand/0"
 
 import base64
@@ -37,7 +37,7 @@ except Exception:
 # ==================== НАСТРОЙКИ ОБНОВЛЕНИЯ ====================
 UPDATE_URL = "https://raw.githubusercontent.com/SlinePLAY/MultiCommand-/main/MultiCommand.plugin"
 DOWNLOAD_URL = "https://github.com/SlinePLAY/MultiCommand-/releases/latest"
-CURRENT_VERSION = "2.2"
+CURRENT_VERSION = "2.3"
 # ============================================================
 
 
@@ -224,19 +224,82 @@ class MultiCommandPlugin(BasePlugin):
 
         self.log(f"v{CURRENT_VERSION} loaded. Dev: {self.is_dev}")
 
-        # Запуск фоновой проверки обновлений
-        self.check_for_updates()
-
     def on_plugin_unload(self):
         self.log("unloaded")
+
+    # ==================== НАСТРОЙКИ (кнопка проверки обновления) ====================
+    def create_settings(self):
+        from ui.settings import Header, Divider, Switch, Text
+        items = []
+        items.append(Header(text="MultiCommand"))
+        items.append(Text(
+            text=f"Версия: {CURRENT_VERSION}",
+        ))
+        items.append(Divider())
+        items.append(Header(text="Обновление"))
+        items.append(Text(
+            text="Проверить обновление",
+            on_click=self._on_check_update,
+        ))
+        items.append(Text(
+            text="Открыть страницу загрузки",
+            on_click=self._on_open_download,
+        ))
+        items.append(Divider())
+        items.append(Header(text="Умные вставки"))
+        items.append(Switch(
+            key="inserts_on",
+            text="Включить умные вставки",
+            default=True,
+            on_change=self._on_inserts_toggle,
+        ))
+        items.append(Divider())
+        items.append(Text(
+            text="Сбросить счётчик сообщений",
+            red=True,
+            on_click=self._on_reset_counter,
+        ))
+        return items
+
+    def _on_inserts_toggle(self, view, value):
+        try:
+            self.inserts_on = bool(value)
+            self.set_setting("inserts_on", "1" if self.inserts_on else "0")
+            self.log(f"inserts: {self.inserts_on}")
+        except Exception as e:
+            self.log(f"toggle err: {e}")
+
+    def _on_reset_counter(self, view=None):
+        self.msg_count = 0
+        self.session_start = datetime.now()
+        self.log("counter reset")
+
+    def _on_check_update(self, view=None):
+        """Кнопка «Проверить обновление» в настройках."""
+        self.log("проверка обновлений из настроек")
+        self.update_checked = False
+        self.check_for_updates()
+
+    def _on_open_download(self, view=None):
+        """Открыть страницу загрузки в браузере."""
+        try:
+            from client_utils import get_last_fragment
+            frag = get_last_fragment()
+            if not frag:
+                return
+            activity = frag.getParentActivity()
+            if not activity:
+                return
+            Intent = find_class("android.content.Intent")
+            Uri = find_class("android.net.Uri")
+            intent = Intent(Intent.ACTION_VIEW, Uri.parse(DOWNLOAD_URL))
+            activity.startActivity(intent)
+        except Exception as e:
+            self.log(f"open url err: {e}")
 
     # ==================== АВТООБНОВЛЕНИЕ ====================
     def check_for_updates(self):
         """Запускает проверку в фоне, чтобы не блокировать UI."""
-        if self.update_checked:
-            self.log("проверка уже была, пропуск")
-            return
-        self.update_checked = True
         self.log("старт проверки обновлений")
         try:
             t = threading.Thread(target=self._do_check_updates, daemon=True)
@@ -264,7 +327,7 @@ class MultiCommandPlugin(BasePlugin):
             self.log(f"удалённая версия: {remote_version}")
 
             if not remote_version:
-                self.log("версия не найдена в файле")
+                self.log("версия не найдена")
                 return
 
             if self._ver_tuple(remote_version) > self._ver_tuple(CURRENT_VERSION):
@@ -289,12 +352,12 @@ class MultiCommandPlugin(BasePlugin):
             with open(new_path, "w", encoding="utf-8") as f:
                 f.write(remote_code)
 
-            self.log(f"Сохранён новый файл: {new_path}")
+            self.log(f"сохранён: {new_path}")
 
             shown = self._show_update_bulletin(remote_version, new_path)
 
             if not shown:
-                self._notify_via_message(remote_version, new_path)
+                self._notify_via_message(remote_version)
         except Exception as e:
             self.log(f"download err: {e}")
 
@@ -311,13 +374,13 @@ class MultiCommandPlugin(BasePlugin):
                 on_click=lambda: self._install_update(file_path),
                 duration=BulletinHelper.DURATION_PROLONG,
             )
-            self.log("Плашка с кнопкой показана")
+            self.log("плашка показана")
             return True
         except Exception as e:
             self.log(f"bulletin err: {e}")
             return False
 
-    def _notify_via_message(self, remote_version, file_path):
+    def _notify_via_message(self, remote_version):
         try:
             text = (
                 f"MultiCommand v{remote_version} доступен.\n"
@@ -326,7 +389,7 @@ class MultiCommandPlugin(BasePlugin):
             try:
                 from client_utils import send_message
                 send_message(0, None, text)
-                self.log("Уведомление отправлено в избранное")
+                self.log("уведомление отправлено")
             except Exception:
                 self.log(f"UPDATE: {text}")
         except Exception as e:
@@ -336,9 +399,8 @@ class MultiCommandPlugin(BasePlugin):
         try:
             if send_document is not None:
                 send_document(file_path)
-                self.log(f"Файл отправлен: {file_path}")
+                self.log(f"файл отправлен: {file_path}")
                 return
-            self.log("send_document недоступен, пробую через Java")
             self._send_file_java(file_path)
         except Exception as e:
             self.log(f"install err: {e}")
@@ -348,23 +410,19 @@ class MultiCommandPlugin(BasePlugin):
             from client_utils import get_last_fragment
             frag = get_last_fragment()
             if not frag:
-                self.log("нет фрагмента")
                 return
             activity = frag.getParentActivity()
             if not activity:
-                self.log("нет активити")
                 return
-
             Intent = find_class("android.content.Intent")
             Uri = find_class("android.net.Uri")
             File = find_class("java.io.File")
-
             intent = Intent(Intent.ACTION_VIEW)
             uri = Uri.fromFile(File(file_path))
             intent.setDataAndType(uri, "application/octet-stream")
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             activity.startActivity(intent)
-            self.log(f"Открыт через Intent: {file_path}")
+            self.log(f"открыт через Intent")
         except Exception as e:
             self.log(f"java install err: {e}")
 
@@ -377,7 +435,6 @@ class MultiCommandPlugin(BasePlugin):
             try:
                 if edit_message is not None:
                     edit_message(message_obj=msg, passtext=".")
-                    self.log("edited to dot before delete")
             except Exception as e:
                 self.log(f"edit dot err: {e}")
             return HookResult(strategy=HookStrategy.CONTINUE)
@@ -402,7 +459,7 @@ class MultiCommandPlugin(BasePlugin):
             if lower == ".обновить":
                 self.update_checked = False
                 self.check_for_updates()
-                params.message = "проверяю обновления в фоне..."
+                params.message = "проверяю обновления..."
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
 
             if lower == ".вставки":
@@ -491,42 +548,4 @@ class MultiCommandPlugin(BasePlugin):
                     self.log(f"DEV add troll: {p}")
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
 
-            return HookResult(strategy=HookStrategy.CONTINUE)
-
-        self.msg_count += 1
-        if self.inserts_on and random.randint(1, 100) <= INSERT_CHANCE:
-            ph = random.choice(SMART)
-            params.message = f"{text}\n\nкстати, {ph}"
-            return HookResult(strategy=HookStrategy.MODIFY, params=params)
-
-        return HookResult(strategy=HookStrategy.CONTINUE)
-
-    # ==================== ХЕЛП ====================
-    def get_help_text(self):
-        return (
-            "MultiCommand v" + CURRENT_VERSION + "\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "\n"
-            "Спор\n"
-            ".спор — случайная фраза для спора\n"
-            ".тролль — жёсткая троллинг-фраза\n"
-            "\n"
-            "Развлечения\n"
-            ".рулетка — да/нет/возможно\n"
-            ".гадалка — случайное предсказание\n"
-            ".гадалка <текст> — текст + предсказание\n"
-            ".выбери а или б — случайный выбор\n"
-            "\n"
-            "Шифрование\n"
-            ".шифр <текст> — зашифровать\n"
-            ".расшифр <каша> — расшифровать\n"
-            "\n"
-            "Управление\n"
-            ".вставки — вкл/выкл умные вставки\n"
-            ".вставки вкл — включить\n"
-            ".вставки выкл — выключить\n"
-            ".обновить — проверить обновления\n"
-            ".стата — статистика\n"
-            ".версия — версия плагина\n"
-            ".хелп — это сообщение\n"
-        )
+            return HookResult(strategy=HookS
