@@ -12,7 +12,7 @@ import urllib.request
 import os
 import threading
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from base_plugin import BasePlugin, HookResult, HookStrategy
 from android_utils import log
@@ -34,72 +34,41 @@ except Exception:
     BulletinHelper = None
 
 
-# ==================== НАСТРОЙКИ ОБНОВЛЕНИЯ ====================
 UPDATE_URL = "https://raw.githubusercontent.com/SlinePLAY/MultiCommand-/main/MultiCommand.plugin"
 DOWNLOAD_URL = "https://github.com/SlinePLAY/MultiCommand-/releases/latest"
 CURRENT_VERSION = "2.3"
-# ============================================================
-
 
 ARGUE = [
     "ты вообще не в теме, закрой рот",
-    "твой аргумент ничего не стоит, подумай ещё раз",
-    "ты не прав, и это очевидно даже ребёнку",
-    "иди почитай что-нибудь, потом поговорим",
-    "твой базар вообще не в кассу, следи за словами",
-    "не смеши людей, тебя же никто не слушает",
-    "твоя позиция просто смешна, перестань позориться",
-    "ты несешь полную чушь, остановись",
-    "с тобой спорить — это трата времени, иди гуляй",
-    "твои слова — пустой звук, ничего не доказываешь",
+    "твой аргумент ничего не стоит",
+    "ты не прав, и это очевидно",
 ]
 
 TROLL = [
     "твой отец еблан, а мать шалава",
     "тебя мать в детстве об асфальт уронила?",
     "ты ошибка природы, причём неудачная",
-    "твой род проклят, начиная с тебя",
-    "иди к чёрту, там тебе самое место",
-    "ты настолько тупой, что даже словами не описать",
-    "ты гнилой изнутри, это видно за версту",
-    "сядь, обосрался уже",
 ]
 
 ROULETTE = [
-    "да", "нет", "возможно", "не сейчас", "спроси позже",
-    "да, но не сегодня", "нет, но может быть", "однозначно да",
-    "однозначно нет", "я бы не советовал", "попробуй",
-    "не судьба", "звёзды говорят да", "звёзды говорят нет",
-    "делай что хочешь", "тебе решать", "а сам как думаешь?",
-    "50 на 50", "хуй знает", "забей", "не парься",
+    "да", "нет", "возможно", "не сейчас",
+    "50 на 50", "хуй знает", "забей",
 ]
 
 FORTUNES = [
-    "сегодня тебя ждёт неожиданная встреча — будь готов",
+    "сегодня тебя ждёт неожиданная встреча",
     "скоро получишь новость, которая всё изменит",
     "не принимай важных решений до конца недели",
-    "тебя ждёт дорога, и она будет не близкой",
-    "кто-то из прошлого скоро напомнит о себе",
-    "деньги придут оттуда, откуда не ждёшь",
-    "остерегайся человека с зелёными глазами",
-    "твоё желание исполнится, но не так, как ты думаешь",
-    "готовься к переменам — они уже на пороге",
-    "сегодня твой день, не упусти его",
 ]
 
 SMART = [
     "кстати, дельфины спят с одним открытым глазом",
     "а ты знал, что у осьминога три сердца",
-    "интересный факт: бананы — это ягоды, а малина — нет",
-    "между прочим, Эйнштейн не носил носки",
-    "кстати, мёд не портится никогда",
-    "а ты в курсе, что у улитки около 25 тысяч зубов",
+    "интересный факт: бананы — это ягоды",
 ]
 
 INSERT_CHANCE = 10
 
-
-# ==================== ШИФР ====================
 _FW = {}
 for _i in range(26):
     _FW[chr(ord('A') + _i)] = chr(0xFF21 + _i)
@@ -159,14 +128,14 @@ def decrypt(text):
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
     filtered = "".join(c for c in ascii_t if c in allowed)
     if not filtered:
-        return "нет данных для расшифровки"
+        return "нет данных"
     pad = len(filtered) % 4
     if pad:
         filtered += "=" * (4 - pad)
     try:
         s = base64.b64decode(filtered.encode("ascii")).decode("utf-8")
     except Exception as e:
-        return f"ошибка base64: {e}"
+        return f"ошибка: {e}"
     return caesar(s, shift=-3)
 
 
@@ -174,14 +143,13 @@ def parse_choices(raw):
     raw = raw.strip().strip('"').strip("'").strip()
     for sep in [" или ", " | ", ", "]:
         if sep in raw:
-            parts = [p.strip().strip('"').strip("'") for p in raw.split(sep)]
+            parts = [p.strip() for p in raw.split(sep)]
             parts = [p for p in parts if p]
             if len(parts) >= 2:
                 return parts
     return []
 
 
-# ==================== ПЛАГИН ====================
 class MultiCommandPlugin(BasePlugin):
 
     def __init__(self):
@@ -190,362 +158,247 @@ class MultiCommandPlugin(BasePlugin):
         self.msg_count = 0
         self.session_start = None
         self.inserts_on = True
-        self.update_checked = False
 
     def on_plugin_load(self):
         self.add_on_send_message_hook()
-
         try:
             self.add_on_delete_message_hook()
-            self.log("delete hook OK")
-        except AttributeError:
-            try:
-                self.add_hook("delete_message")
-                self.log("delete via add_hook")
-            except Exception as e:
-                self.log(f"delete hook n/a: {e}")
-
+        except Exception:
+            pass
         try:
             val = self.get_setting("inserts_on", "1")
             self.inserts_on = (val == "1" or val is True)
         except Exception:
             self.inserts_on = True
-
         self.session_start = datetime.now()
-
         try:
             me = self.get_me()
-            un = getattr(me, "username", "") if me else ""
-            if un == "SlinePLAY":
+            if me and getattr(me, "username", "") == "SlinePLAY":
                 self.is_dev = True
-                self.log("DEV for @SlinePLAY")
-        except Exception as e:
-            self.log(f"get_me err: {e}")
-
-        self.log(f"v{CURRENT_VERSION} loaded. Dev: {self.is_dev}")
+        except Exception:
+            pass
+        self.log(f"v{CURRENT_VERSION} loaded")
 
     def on_plugin_unload(self):
         self.log("unloaded")
 
-    # ==================== НАСТРОЙКИ (кнопка проверки обновления) ====================
     def create_settings(self):
         from ui.settings import Header, Divider, Switch, Text
-        items = []
-        items.append(Header(text="MultiCommand"))
-        items.append(Text(
-            text=f"Версия: {CURRENT_VERSION}",
-        ))
-        items.append(Divider())
-        items.append(Header(text="Обновление"))
-        items.append(Text(
-            text="Проверить обновление",
-            on_click=self._on_check_update,
-        ))
-        items.append(Text(
-            text="Открыть страницу загрузки",
-            on_click=self._on_open_download,
-        ))
-        items.append(Divider())
-        items.append(Header(text="Умные вставки"))
-        items.append(Switch(
-            key="inserts_on",
-            text="Включить умные вставки",
-            default=True,
-            on_change=self._on_inserts_toggle,
-        ))
-        items.append(Divider())
-        items.append(Text(
-            text="Сбросить счётчик сообщений",
-            red=True,
-            on_click=self._on_reset_counter,
-        ))
-        return items
+        return [
+            Header(text="MultiCommand"),
+            Text(text=f"Версия: {CURRENT_VERSION}"),
+            Divider(),
+            Header(text="Обновление"),
+            Text(text="Проверить обновление", on_click=self._on_check),
+            Text(text="Открыть страницу загрузки", on_click=self._on_open),
+            Divider(),
+            Header(text="Вставки"),
+            Switch(key="inserts_on", text="Умные вставки",
+                   default=True, on_change=self._on_ins),
+        ]
 
-    def _on_inserts_toggle(self, view, value):
+    def _on_ins(self, view, value):
         try:
             self.inserts_on = bool(value)
             self.set_setting("inserts_on", "1" if self.inserts_on else "0")
-            self.log(f"inserts: {self.inserts_on}")
         except Exception as e:
-            self.log(f"toggle err: {e}")
+            self.log(f"ins err: {e}")
 
-    def _on_reset_counter(self, view=None):
-        self.msg_count = 0
-        self.session_start = datetime.now()
-        self.log("counter reset")
+    def _on_check(self, view=None):
+        self.log("проверка из настроек")
+        threading.Thread(target=self._do_check, daemon=True).start()
 
-    def _on_check_update(self, view=None):
-        """Кнопка «Проверить обновление» в настройках."""
-        self.log("проверка обновлений из настроек")
-        self.update_checked = False
-        self.check_for_updates()
-
-    def _on_open_download(self, view=None):
-        """Открыть страницу загрузки в браузере."""
+    def _on_open(self, view=None):
         try:
             from client_utils import get_last_fragment
             frag = get_last_fragment()
             if not frag:
                 return
-            activity = frag.getParentActivity()
-            if not activity:
+            act = frag.getParentActivity()
+            if not act:
                 return
             Intent = find_class("android.content.Intent")
             Uri = find_class("android.net.Uri")
-            intent = Intent(Intent.ACTION_VIEW, Uri.parse(DOWNLOAD_URL))
-            activity.startActivity(intent)
+            act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DOWNLOAD_URL)))
         except Exception as e:
-            self.log(f"open url err: {e}")
+            self.log(f"open err: {e}")
 
-    # ==================== АВТООБНОВЛЕНИЕ ====================
-    def check_for_updates(self):
-        """Запускает проверку в фоне, чтобы не блокировать UI."""
-        self.log("старт проверки обновлений")
+    def _do_check(self):
         try:
-            t = threading.Thread(target=self._do_check_updates, daemon=True)
-            t.start()
-        except Exception as e:
-            self.log(f"thread err: {e}")
-
-    def _do_check_updates(self):
-        """Фоновая проверка обновлений."""
-        try:
-            self.log(f"качаю: {UPDATE_URL}")
-            req = urllib.request.Request(
-                UPDATE_URL,
-                headers={"User-Agent": "MultiCommand/1.0"}
-            )
+            self.log(f"качаю {UPDATE_URL}")
+            req = urllib.request.Request(UPDATE_URL,
+                                         headers={"User-Agent": "MC/1.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
-                remote_code = resp.read().decode("utf-8", errors="ignore")
-            self.log(f"получено {len(remote_code)} символов")
-
-            remote_version = None
-            for line in remote_code.splitlines():
+                code = resp.read().decode("utf-8", errors="ignore")
+            self.log(f"получено {len(code)} симв.")
+            remote_v = None
+            for line in code.splitlines():
                 if line.strip().startswith("__version__"):
-                    remote_version = line.split("=")[1].strip().strip('"').strip("'")
+                    remote_v = line.split("=")[1].strip().strip('"').strip("'")
                     break
-            self.log(f"удалённая версия: {remote_version}")
-
-            if not remote_version:
-                self.log("версия не найдена")
+            self.log(f"remote: {remote_v}")
+            if not remote_v:
                 return
-
-            if self._ver_tuple(remote_version) > self._ver_tuple(CURRENT_VERSION):
-                self.log(f"есть обновление: {remote_version}")
-                self._download_and_notify(remote_code, remote_version)
+            if self._vt(remote_v) > self._vt(CURRENT_VERSION):
+                self.log(f"есть обновление {remote_v}")
+                self._save_and_notify(code, remote_v)
             else:
-                self.log("обновлений нет")
+                self.log("нет обновлений")
         except Exception as e:
-            self.log(f"update check err: {e}")
+            self.log(f"check err: {e}")
 
-    def _ver_tuple(self, v):
+    def _vt(self, v):
         try:
             return tuple(int(x) for x in v.split("."))
         except Exception:
             return (0,)
 
-    def _download_and_notify(self, remote_code, remote_version):
+    def _save_and_notify(self, code, ver):
         try:
-            plugin_dir = os.path.dirname(os.path.abspath(__file__))
-            new_path = os.path.join(plugin_dir, "multicommand_new.plugin")
-
-            with open(new_path, "w", encoding="utf-8") as f:
-                f.write(remote_code)
-
-            self.log(f"сохранён: {new_path}")
-
-            shown = self._show_update_bulletin(remote_version, new_path)
-
+            d = os.path.dirname(os.path.abspath(__file__))
+            p = os.path.join(d, "multicommand_new.plugin")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(code)
+            self.log(f"сохранён {p}")
+            shown = False
+            if BulletinHelper is not None:
+                try:
+                    BulletinHelper.show_with_button(
+                        text=f"MultiCommand v{ver} доступен",
+                        icon_res_id=0,
+                        button_text="Обновить",
+                        on_click=lambda: self._install(p),
+                        duration=BulletinHelper.DURATION_PROLONG,
+                    )
+                    shown = True
+                    self.log("плашка показана")
+                except Exception as e:
+                    self.log(f"bulletin err: {e}")
             if not shown:
-                self._notify_via_message(remote_version)
+                try:
+                    from client_utils import send_message
+                    send_message(0, None,
+                                 f"MultiCommand v{ver} доступен\n{DOWNLOAD_URL}")
+                    self.log("уведомление отправлено")
+                except Exception as e:
+                    self.log(f"notify err: {e}")
         except Exception as e:
-            self.log(f"download err: {e}")
+            self.log(f"save err: {e}")
 
-    def _show_update_bulletin(self, remote_version, file_path):
-        if BulletinHelper is None:
-            self.log("BulletinHelper недоступен")
-            return False
-
-        try:
-            BulletinHelper.show_with_button(
-                text=f"MultiCommand v{remote_version} доступен",
-                icon_res_id=0,
-                button_text="Обновить",
-                on_click=lambda: self._install_update(file_path),
-                duration=BulletinHelper.DURATION_PROLONG,
-            )
-            self.log("плашка показана")
-            return True
-        except Exception as e:
-            self.log(f"bulletin err: {e}")
-            return False
-
-    def _notify_via_message(self, remote_version):
-        try:
-            text = (
-                f"MultiCommand v{remote_version} доступен.\n"
-                f"Скачать: {DOWNLOAD_URL}"
-            )
-            try:
-                from client_utils import send_message
-                send_message(0, None, text)
-                self.log("уведомление отправлено")
-            except Exception:
-                self.log(f"UPDATE: {text}")
-        except Exception as e:
-            self.log(f"notify err: {e}")
-
-    def _install_update(self, file_path):
+    def _install(self, path):
         try:
             if send_document is not None:
-                send_document(file_path)
-                self.log(f"файл отправлен: {file_path}")
+                send_document(path)
+                self.log(f"отправлен {path}")
                 return
-            self._send_file_java(file_path)
-        except Exception as e:
-            self.log(f"install err: {e}")
-
-    def _send_file_java(self, file_path):
-        try:
             from client_utils import get_last_fragment
             frag = get_last_fragment()
             if not frag:
                 return
-            activity = frag.getParentActivity()
-            if not activity:
+            act = frag.getParentActivity()
+            if not act:
                 return
             Intent = find_class("android.content.Intent")
             Uri = find_class("android.net.Uri")
             File = find_class("java.io.File")
-            intent = Intent(Intent.ACTION_VIEW)
-            uri = Uri.fromFile(File(file_path))
-            intent.setDataAndType(uri, "application/octet-stream")
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            activity.startActivity(intent)
-            self.log(f"открыт через Intent")
+            i = Intent(Intent.ACTION_VIEW)
+            i.setDataAndType(Uri.fromFile(File(path)), "application/octet-stream")
+            act.startActivity(i)
         except Exception as e:
-            self.log(f"java install err: {e}")
+            self.log(f"install err: {e}")
 
-    # ==================== УДАЛЕНИЕ ЧЕРЕЗ ТОЧКУ ====================
     def on_delete_message_hook(self, account, params):
         try:
             msg = getattr(params, "message", None) or getattr(params, "msg", None)
             if msg is None:
                 return HookResult(strategy=HookStrategy.CONTINUE)
-            try:
-                if edit_message is not None:
+            if edit_message is not None:
+                try:
                     edit_message(message_obj=msg, passtext=".")
-            except Exception as e:
-                self.log(f"edit dot err: {e}")
+                except Exception:
+                    pass
             return HookResult(strategy=HookStrategy.CONTINUE)
-        except Exception as e:
-            self.log(f"delete hook err: {e}")
+        except Exception:
             return HookResult(strategy=HookStrategy.CONTINUE)
 
-    # ==================== КОМАНДЫ ====================
     def on_send_message_hook(self, account, params):
         message = getattr(params, "message", None)
         if not message or not isinstance(message, str):
             return HookResult(strategy=HookStrategy.CONTINUE)
-
         text = message.strip()
-        lower = text.lower()
+        low = text.lower()
 
-        if lower.startswith("."):
-            if lower == ".хелп" or lower == ".команды":
-                params.message = self.get_help_text()
+        if low.startswith("."):
+            if low in (".хелп", ".команды"):
+                params.message = self.get_help()
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-
-            if lower == ".обновить":
-                self.update_checked = False
-                self.check_for_updates()
+            if low == ".обновить":
+                threading.Thread(target=self._do_check, daemon=True).start()
                 params.message = "проверяю обновления..."
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-
-            if lower == ".вставки":
+            if low == ".вставки":
                 self.inserts_on = not self.inserts_on
                 try:
                     self.set_setting("inserts_on", "1" if self.inserts_on else "0")
                 except Exception:
                     pass
-                params.message = f"умные вставки {'включены' if self.inserts_on else 'выключены'}"
+                params.message = f"вставки {'вкл' if self.inserts_on else 'выкл'}"
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".вставки вкл":
-                self.inserts_on = True
-                try: self.set_setting("inserts_on", "1")
-                except Exception: pass
-                params.message = "умные вставки включены"
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".вставки выкл":
-                self.inserts_on = False
-                try: self.set_setting("inserts_on", "0")
-                except Exception: pass
-                params.message = "умные вставки выключены"
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
-
-            if lower == ".спор":
+            if low == ".спор":
                 params.message = random.choice(ARGUE)
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".тролль":
+            if low == ".тролль":
                 params.message = random.choice(TROLL)
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".рулетка":
+            if low == ".рулетка":
                 params.message = random.choice(ROULETTE)
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".гадалка":
+            if low == ".гадалка":
                 params.message = random.choice(FORTUNES)
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower.startswith(".гадалка "):
-                orig = text[9:].strip()
-                if orig:
-                    params.message = f"{orig}\n\n{random.choice(FORTUNES)}"
+            if low.startswith(".гадалка "):
+                o = text[9:].strip()
+                if o:
+                    params.message = f"{o}\n\n{random.choice(FORTUNES)}"
                     return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower.startswith(".выбери "):
+            if low.startswith(".выбери "):
                 ch = parse_choices(text[8:].strip())
-                if not ch:
-                    params.message = "дай два варианта через 'или' или ','"
-                else:
-                    params.message = random.choice(ch)
+                params.message = random.choice(ch) if ch else "нужно 2 варианта через 'или'"
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".стата":
+            if low == ".стата":
                 up = datetime.now() - self.session_start if self.session_start else None
                 h = up.seconds // 3600 if up else 0
                 m = (up.seconds % 3600) // 60 if up else 0
-                ins = "вкл" if self.inserts_on else "выкл"
-                params.message = (
-                    f"стата\n"
-                    f"сообщений: {self.msg_count}\n"
-                    f"в сети: {h}ч {m}м\n"
-                    f"вставки: {ins}\n"
-                    f"плагин: v{CURRENT_VERSION}"
-                )
+                params.message = (f"стата\nсообщений: {self.msg_count}\n"
+                                  f"в сети: {h}ч {m}м\nплагин: v{CURRENT_VERSION}")
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower == ".версия":
-                params.message = f"MultiCommand v{CURRENT_VERSION}\nАвтор: @SlinePLAY"
+            if low == ".версия":
+                params.message = f"MultiCommand v{CURRENT_VERSION}"
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
-
-            if lower.startswith(".шифр "):
-                orig = text[6:].strip()
-                if orig:
-                    params.message = encrypt(orig)
+            if low.startswith(".шифр "):
+                o = text[6:].strip()
+                if o:
+                    params.message = encrypt(o)
                     return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower.startswith(".расшифр "):
-                enc = text[9:].strip()
-                if enc:
-                    params.message = decrypt(enc)
+            if low.startswith(".расшифр "):
+                e = text[9:].strip()
+                if e:
+                    params.message = decrypt(e)
                     return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            return HookResult(strategy=HookStrategy.CONTINUE)
 
-            if lower.startswith(".доб ") and self.is_dev:
-                p = text[5:].strip()
-                if p:
-                    ARGUE.append(p)
-                    self.log(f"DEV add argue: {p}")
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            if lower.startswith(".добтролль ") and self.is_dev:
-                p = text[10:].strip()
-                if p:
-                    TROLL.append(p)
-                    self.log(f"DEV add troll: {p}")
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        self.msg_count += 1
+        if self.inserts_on and random.randint(1, 100) <= INSERT_CHANCE:
+            params.message = f"{text}\n\nкстати, {random.choice(SMART)}"
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        return HookResult(strategy=HookStrategy.CONTINUE)
 
-            return HookResult(strategy=HookS
+    def get_help(self):
+        return (
+            f"MultiCommand v{CURRENT_VERSION}\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "Спор: .спор .тролль\n"
+            "Развлечения: .рулетка .гадалка .выбери\n"
+            "Шифр: .шифр <текст> / .расшифр <каша>\n"
+            "Управление: .вставки .обновить .стата .версия .хелп\n"
+        )
