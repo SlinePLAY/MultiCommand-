@@ -2,7 +2,7 @@ __id__ = "multicommand"
 __name__ = "MultiCommand"
 __description__ = "для ознакомления с плагином напишите в любой чат \".хелп\""
 __author__ = "@SlinePLAY"
-__version__ = "2.1"
+__version__ = "2.2"
 __icon__ = "avamulticommand/0"
 
 import base64
@@ -10,6 +10,7 @@ import random
 import unicodedata
 import urllib.request
 import os
+import threading
 from datetime import datetime
 from typing import Any, List
 
@@ -36,7 +37,7 @@ except Exception:
 # ==================== НАСТРОЙКИ ОБНОВЛЕНИЯ ====================
 UPDATE_URL = "https://raw.githubusercontent.com/SlinePLAY/MultiCommand-/main/MultiCommand.plugin"
 DOWNLOAD_URL = "https://github.com/SlinePLAY/MultiCommand-/releases/latest"
-CURRENT_VERSION = "2.1"
+CURRENT_VERSION = "2.2"
 # ============================================================
 
 
@@ -223,6 +224,7 @@ class MultiCommandPlugin(BasePlugin):
 
         self.log(f"v{CURRENT_VERSION} loaded. Dev: {self.is_dev}")
 
+        # Запуск фоновой проверки обновлений
         self.check_for_updates()
 
     def on_plugin_unload(self):
@@ -230,29 +232,46 @@ class MultiCommandPlugin(BasePlugin):
 
     # ==================== АВТООБНОВЛЕНИЕ ====================
     def check_for_updates(self):
+        """Запускает проверку в фоне, чтобы не блокировать UI."""
         if self.update_checked:
+            self.log("проверка уже была, пропуск")
             return
         self.update_checked = True
-
+        self.log("старт проверки обновлений")
         try:
+            t = threading.Thread(target=self._do_check_updates, daemon=True)
+            t.start()
+        except Exception as e:
+            self.log(f"thread err: {e}")
+
+    def _do_check_updates(self):
+        """Фоновая проверка обновлений."""
+        try:
+            self.log(f"качаю: {UPDATE_URL}")
             req = urllib.request.Request(
                 UPDATE_URL,
                 headers={"User-Agent": "MultiCommand/1.0"}
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 remote_code = resp.read().decode("utf-8", errors="ignore")
+            self.log(f"получено {len(remote_code)} символов")
 
             remote_version = None
             for line in remote_code.splitlines():
                 if line.strip().startswith("__version__"):
                     remote_version = line.split("=")[1].strip().strip('"').strip("'")
                     break
+            self.log(f"удалённая версия: {remote_version}")
 
-            if remote_version and self._ver_tuple(remote_version) > self._ver_tuple(CURRENT_VERSION):
-                self.log(f"Доступно обновление: {remote_version}")
+            if not remote_version:
+                self.log("версия не найдена в файле")
+                return
+
+            if self._ver_tuple(remote_version) > self._ver_tuple(CURRENT_VERSION):
+                self.log(f"есть обновление: {remote_version}")
                 self._download_and_notify(remote_code, remote_version)
             else:
-                self.log("Обновлений нет")
+                self.log("обновлений нет")
         except Exception as e:
             self.log(f"update check err: {e}")
 
@@ -382,8 +401,8 @@ class MultiCommandPlugin(BasePlugin):
 
             if lower == ".обновить":
                 self.update_checked = False
-                params.message = "проверяю обновления..."
                 self.check_for_updates()
+                params.message = "проверяю обновления в фоне..."
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
 
             if lower == ".вставки":
